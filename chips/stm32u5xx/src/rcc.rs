@@ -234,6 +234,7 @@ register_bitfields![u32,
         TIM2EN OFFSET(0) NUMBITS(1) []
     ],
     pub APB2ENR [
+        USBEN OFFSET(24) NUMBITS(1) [],
         USART1EN OFFSET(14) NUMBITS(1) [],
         SPI1EN OFFSET(12) NUMBITS(1) []
     ],
@@ -793,6 +794,9 @@ impl Rcc {
     }
     pub fn enable_i2c1(&self) {
         self.registers.apb1enr1.modify(APB1ENR1::I2C1EN::SET);
+    }
+    pub fn enable_usb(&self) {
+        self.registers.apb2enr.modify(APB2ENR::USBEN::SET);
     }
 
     /// Get the effective frequency for PCLK (and PCLK used for timers) from an input frequency and prescaler

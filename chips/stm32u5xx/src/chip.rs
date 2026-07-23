@@ -16,19 +16,19 @@ use crate::{
         EXTI14_IRQ, EXTI15_IRQ, GPDMA1_CH0_IRQ, GPDMA1_CH1_IRQ, GPDMA1_CH2_IRQ, GPDMA1_CH3_IRQ,
         GPDMA1_CH4_IRQ, GPDMA1_CH5_IRQ, GPDMA1_CH6_IRQ, GPDMA1_CH7_IRQ, GPDMA1_CH8_IRQ,
         GPDMA1_CH9_IRQ, GPDMA1_CH10_IRQ, GPDMA1_CH11_IRQ, GPDMA1_CH12_IRQ, GPDMA1_CH13_IRQ,
-        GPDMA1_CH14_IRQ, GPDMA1_CH15_IRQ, HASH_IRQ, I2C1_ER_IRQ, I2C1_EV_IRQ, PKA_IRQ, SPI1_IRQ,
-        TIM2_IRQ, USART1_IRQ,
+        GPDMA1_CH14_IRQ, GPDMA1_CH15_IRQ, HASH_IRQ, I2C1_ER_IRQ, I2C1_EV_IRQ, OTG_HS_IRQ, PKA_IRQ,
+        SPI1_IRQ, TIM2_IRQ, USART1_IRQ,
     },
     pwr::{self, VoltageScale},
     rcc::{
         self,
         config::{ClockMuxConfig, RccConfig},
         values::{
-            AHBPrescaler, APBPrescaler, Adcdacsel, I2csel, MsiRange, Rtcsel, Spi1sel, Sysclk,
-            Usart1sel,
+            AHBPrescaler, APBPrescaler, Adcdacsel, I2csel, Iclksel, MsiRange, Rtcsel, Spi1sel,
+            Sysclk, Usart1sel,
         },
     },
-    rsa, rtc, spi, tim, usart,
+    rsa, rtc, spi, tim, usart, usbd,
 };
 
 use core::fmt::Write;
@@ -64,6 +64,7 @@ pub struct Stm32u5xxDefaultPeripherals<'a> {
     pub crc: crc::CRC<'a>,
     pub hash: hash::hash::Hash<'a>,
     pub aes: ecb::Aes<'a, AES256>,
+    pub usbd: usbd::Usbd<'a>,
 }
 
 impl<'a> Stm32u5xxDefaultPeripherals<'a> {
@@ -90,6 +91,7 @@ impl<'a> Stm32u5xxDefaultPeripherals<'a> {
             aes: aes::ecb::Aes::new(stm32u5xx_unsafe::aes::AesRegistersManager {
                 registers: stm32u5xx_unsafe::aes::AES_BASE,
             }),
+            usbd: usbd::Usbd::new(usbd::USB_BASE, usbd::USBRAM_BASE),
         }
     }
 
@@ -105,6 +107,7 @@ impl<'a> Stm32u5xxDefaultPeripherals<'a> {
         self.rcc.enable_aes();
         self.rcc.enable_syscfg();
         self.rcc.enable_pwr();
+        self.rcc.enable_dac1();
         self.rcc.enable_adc1();
         self.rcc.enable_dac1();
         self.rcc.enable_hash();
@@ -114,6 +117,7 @@ impl<'a> Stm32u5xxDefaultPeripherals<'a> {
         self.rcc.enable_spi1();
         self.rcc.enable_i2c1();
         self.rcc.enable_rtc_apb();
+        self.rcc.enable_usb();
 
         // Select which clocks to enable, and how to configure them
         let mut rcc_config = RccConfig {
@@ -121,8 +125,8 @@ impl<'a> Stm32u5xxDefaultPeripherals<'a> {
             msik: Some(MsiRange::Range4mhz),
             hsi: true, // 16MHz oscillator enabled (for SYSCLK/ADC/DAC)
             hse: None,
-            hsi48: false,
-            lsi: true, // 32kHz oscillator enabled (for RTC)
+            hsi48: true, // 48MHz oscillator enabled (for USB)
+            lsi: true,   // 32kHz oscillator enabled (for RTC)
             pll1: None,
             pll2: None,
             pll3: None,
@@ -145,6 +149,8 @@ impl<'a> Stm32u5xxDefaultPeripherals<'a> {
         rcc_config.mux.spi1sel = Spi1sel::Pclk2;
         // Use LSI for RTC
         rcc_config.mux.rtcsel = Rtcsel::Lsi;
+        // Use HSI48 for USB (it's the default anyways)
+        rcc_config.mux.iclksel = Iclksel::Hsi48;
 
         // Backup domain write protection needs to be disabled to be able to change the RCC_BDCR register
         // This is necessary for enabling the LSI oscillator and configuring the RTC
@@ -164,9 +170,12 @@ impl<'a> Stm32u5xxDefaultPeripherals<'a> {
         self.spi1.set_clocks(clocks);
         self.i2c1.set_clocks(clocks);
         self.rtc.set_clocks(clocks);
+        self.usbd.set_clocks(clocks);
 
         // Activate the independent analog supply, needed for analog peripherals
         self.pwr.validate_vdda();
+        // Activate the independent USB supply
+        self.pwr.validate_vddusb();
 
         // Register deferred call clients
         self.usart1.register();
@@ -230,6 +239,11 @@ impl InterruptService for Stm32u5xxDefaultPeripherals<'_> {
             ADC1_2_IRQ => {
                 // ADC1
                 self.adc1.handle_interrupt();
+                true
+            }
+            OTG_HS_IRQ => {
+                // USB
+                self.usbd.handle_interrupt();
                 true
             }
             TIM2_IRQ => {

@@ -23,6 +23,7 @@ pub mod rtc;
 pub mod spi;
 pub mod tim;
 pub mod usart;
+pub mod usbd;
 
 use cortexm33::{CortexM33, CortexMVariant, initialize_ram_jump_to_main, unhandled_interrupt};
 

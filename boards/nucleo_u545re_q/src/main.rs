@@ -12,6 +12,7 @@ use kernel::component::Component;
 use kernel::debug::PanicResources;
 use kernel::hil::gpio::{Configure, Output};
 use kernel::hil::symmetric_encryption::AES256;
+use kernel::hil::usb::Client;
 use kernel::platform::chip::Chip;
 use kernel::platform::{KernelResources, SyscallDriverLookup};
 use kernel::utilities::single_thread_value::SingleThreadValue;
@@ -82,7 +83,11 @@ struct NucleoU545RE {
     i2c: &'static capsules_core::i2c_master::I2CMasterDriver<'static, stm32u545::i2c::I2c<'static>>,
     date_time:
         &'static capsules_extra::date_time::DateTimeCapsule<'static, stm32u545::rtc::Rtc<'static>>,
+    keyboard_hid_driver:
+        &'static components::keyboard_hid::KeyboardHidComponentType<stm32u545::usbd::Usbd<'static>>,
 }
+
+const KEYBOARD_HID_DRIVER_NUM: usize = capsules_core::driver::NUM::KeyboardHid as usize;
 
 impl SyscallDriverLookup for NucleoU545RE {
     fn with_driver<F, R>(&self, driver_num: usize, f: F) -> R
@@ -104,6 +109,7 @@ impl SyscallDriverLookup for NucleoU545RE {
             capsules_core::spi_controller::DRIVER_NUM => f(Some(self.spi)),
             capsules_core::i2c_master::DRIVER_NUM => f(Some(self.i2c)),
             capsules_extra::date_time::DRIVER_NUM => f(Some(self.date_time)),
+            KEYBOARD_HID_DRIVER_NUM => f(Some(self.keyboard_hid_driver)),
             _ => f(None),
         }
     }
@@ -559,6 +565,58 @@ unsafe fn start() -> (
         stm32u545::i2c::I2c
     ));
 
+    // Create the strings we include in the USB descriptor
+    let strings = static_init!(
+        [&str; 3],
+        [
+            "STMicroelectronics",       // Manufacturer
+            "NUCLEO-U545RE-Q - TockOS", // Product
+            "serial0001",               // Serial number
+        ]
+    );
+    // Generic HID Keyboard component usage
+    let (keyboard_hid, keyboard_hid_driver) = components::keyboard_hid::KeyboardHidComponent::new(
+        board_kernel,
+        capsules_core::driver::NUM::KeyboardHid as usize,
+        &periphs.usbd,
+        0x0483,
+        0x1234,
+        strings,
+        create_capability!(capabilities::MemoryAllocationCapability),
+    )
+    .finalize(components::keyboard_hid_component_static!(
+        stm32u545::usbd::Usbd<'static>
+    ));
+    keyboard_hid.enable();
+    keyboard_hid.attach();
+
+    /*
+    // CDC
+    let strings = static_init!(
+        [&str; 3],
+        [
+            "STMicroelectronics",       // Manufacturer
+            "NUCLEO-U545RE-Q - TockOS", // Product
+            "serial0001",               // Serial number
+        ]
+    );
+    let cdc = components::cdc::CdcAcmComponent::new(
+        &periphs.usbd,
+        64,
+        0x0483,
+        0x1234,
+        strings,
+        alarm_mux,
+        None,
+    )
+    .finalize(components::cdc_acm_component_static!(
+        stm32u545::usbd::Usbd,
+        stm32u545::tim::Tim2
+    ));
+    cdc.enable();
+    cdc.attach();
+    */
+
     // Platform and Interrupts
     let platform = static_init!(
         NucleoU545RE,
@@ -580,6 +638,7 @@ unsafe fn start() -> (
             aes: aes_driver,
             spi,
             date_time,
+            keyboard_hid_driver,
         }
     );
 
